@@ -57,22 +57,27 @@ def main():
                 with open(PROFILE_WORKAROUND_OUTPUT_FILE, 'r') as prof_file:
                     result_json = json.loads(prof_file.read())
 
-                index_scan_duration = result_json['children'][0]['children'][0]['children'][0]['operator_timing']
+                scan_operator = get_final_operator(result_json)
+                if scan_operator['operator_name'] != 'SEQ_SCAN ' and scan_operator['operator_name'] != 'HNSW_INDEX_SCAN ':
+                    raise Exception(f"Expected SEQ_SCAN or HNSW_INDEX_SCAN operator, got {scan_operator['operator_name']}")
 
                 results.append({
                     'query_idx': query_idx,
                     'e2e_duration': end_time - start_time,
-                    'index_scan_duration': index_scan_duration,
+                    'index_scan_duration': scan_operator['operator_timing'],
                     'latency': result_json['latency'],
+                    'cpu_time': result_json['cpu_time'],
                 })
 
             avg_e2e_duration = sum(r['e2e_duration'] for r in results) / len(results)
+            avg_cpu_time = sum(r['cpu_time'] for r in results) / len(results)
             avg_latency = sum(r['latency'] for r in results) / len(results)
             avg_index_scan_duration = sum(r['index_scan_duration'] for r in results) / len(results)
             percentage_of_e2e = (avg_index_scan_duration / avg_e2e_duration) * 100 if avg_e2e_duration != 0 else 0
             percentage_of_latencys = (avg_index_scan_duration / avg_latency) * 100 if avg_latency != 0 else 0
 
             print(f"Average index_scan_duration: {avg_index_scan_duration:.6f} seconds")
+            print(f"Average cpu_time: {avg_cpu_time:.6f} seconds")
             print(f"Average latency: {avg_latency:.6f} seconds")
             print(f"Average e2e_duration: {avg_e2e_duration:.6f} seconds")
             print(f"Index scan as percentage of total duration: {percentage_of_e2e:.2f}%")
@@ -80,6 +85,10 @@ def main():
 
             pd.DataFrame(results).to_csv(OUTPUT_FILE, index=False)
 
+def get_final_operator(result_json):
+    while len(result_json['children']) > 0:
+        result_json = result_json['children'][0]
+    return result_json
 
 if __name__ == '__main__':
     main()
