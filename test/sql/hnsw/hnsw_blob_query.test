@@ -1,0 +1,163 @@
+# name: test/sql/hnsw/hnsw_blob_query.test
+# description: Test blob-based query vectors for HNSW index scan
+# group: [hnsw]
+
+require vss
+
+# ============================================
+# 1. Encode/decode round-trip (within quantization tolerance)
+# ============================================
+
+# Encode then decode, check max absolute error < 0.01
+query I
+SELECT max(abs(a - b)) < 0.01
+FROM (
+    SELECT unnest(vss_decode_blob(vss_encode_blob([1.0, -0.5, 0.001, 0.0, -0.001]::FLOAT[]))) AS a,
+           unnest([1.0, -0.5, 0.001, 0.0, -0.001]::FLOAT[]) AS b
+);
+----
+true
+
+# ============================================
+# 2. Base64 round-trip (exact)
+# ============================================
+
+query I
+SELECT vss_base64_to_blob(vss_blob_to_base64(vss_encode_blob([1.0, -0.5, 0.25]::FLOAT[])))
+    = vss_encode_blob([1.0, -0.5, 0.25]::FLOAT[]);
+----
+true
+
+# ============================================
+# 3. Distance function correctness with blob
+# ============================================
+
+statement ok
+CREATE TABLE t1 (vec FLOAT[3]);
+
+statement ok
+INSERT INTO t1 VALUES ([1.0, 0.0, 0.0]), ([0.0, 1.0, 0.0]), ([0.0, 0.0, 1.0]);
+
+# array_distance with blob on left
+query I
+SELECT round(array_distance(vss_encode_blob([1.0, 0.0, 0.0]::FLOAT[]), vec)::DECIMAL(18,4), 2) FROM t1 ORDER BY rowid;
+----
+0.00
+1.41
+1.41
+
+# array_distance with blob on right
+query I
+SELECT round(array_distance(vec, vss_encode_blob([1.0, 0.0, 0.0]::FLOAT[]))::DECIMAL(18,4), 2) FROM t1 ORDER BY rowid;
+----
+0.00
+1.41
+1.41
+
+# array_cosine_distance with blob (identical=0, orthogonal=1)
+query I
+SELECT round(array_cosine_distance(vss_encode_blob([1.0, 0.0, 0.0]::FLOAT[]), vec)::DECIMAL(18,4), 2) FROM t1 ORDER BY rowid;
+----
+0.00
+1.00
+1.00
+
+# <-> operator with blob
+query I
+SELECT round((vss_encode_blob([1.0, 0.0, 0.0]::FLOAT[]) <-> vec)::DECIMAL(18,4), 2) FROM t1 ORDER BY rowid;
+----
+0.00
+1.41
+1.41
+
+# <=> operator with blob
+query I
+SELECT round((vss_encode_blob([1.0, 0.0, 0.0]::FLOAT[]) <=> vec)::DECIMAL(18,4), 4) FROM t1 WHERE rowid = 0;
+----
+0.0000
+
+statement ok
+DROP TABLE t1;
+
+# ============================================
+# 4. Optimizer recognition: EXPLAIN shows HNSW_INDEX_SCAN with blob query
+# ============================================
+
+statement ok
+CREATE TABLE t2 (vec FLOAT[3]);
+
+statement ok
+INSERT INTO t2 SELECT array_value(a,b,c) FROM range(1,10) ra(a), range(1,10) rb(b), range(1,10) rc(c);
+
+foreach metric_name,distance_func l2sq,array_distance cosine,array_cosine_distance
+
+statement ok
+DROP INDEX IF EXISTS t2_idx;
+
+statement ok
+CREATE INDEX t2_idx ON t2 USING HNSW (vec) WITH (metric = '${metric_name}');
+
+# Index scan is used with blob query
+query II
+EXPLAIN SELECT * FROM t2 ORDER BY ${distance_func}(vec, vss_encode_blob([1.0, 2.0, 3.0]::FLOAT[])) LIMIT 3;
+----
+physical_plan	<REGEX>:.*HNSW_INDEX_SCAN.*
+
+endloop
+
+# ============================================
+# 5. Operator aliases work with blob
+# ============================================
+
+statement ok
+DROP INDEX IF EXISTS t2_idx;
+
+statement ok
+CREATE INDEX t2_idx ON t2 USING HNSW (vec) WITH (metric = 'l2sq');
+
+query II
+EXPLAIN SELECT * FROM t2 ORDER BY vec <-> vss_encode_blob([1.0, 2.0, 3.0]::FLOAT[]) LIMIT 3;
+----
+physical_plan	<REGEX>:.*HNSW_INDEX_SCAN.*
+
+statement ok
+DROP INDEX IF EXISTS t2_idx;
+
+statement ok
+CREATE INDEX t2_idx ON t2 USING HNSW (vec) WITH (metric = 'cosine');
+
+query II
+EXPLAIN SELECT * FROM t2 ORDER BY vec <=> vss_encode_blob([1.0, 2.0, 3.0]::FLOAT[]) LIMIT 3;
+----
+physical_plan	<REGEX>:.*HNSW_INDEX_SCAN.*
+
+statement ok
+DROP TABLE t2;
+
+# ============================================
+# 6. TopK optimizer works with blob query vectors
+# ============================================
+
+statement ok
+CREATE TABLE t3 (vec FLOAT[3]);
+
+statement ok
+INSERT INTO t3 SELECT array_value(a,b,c) FROM range(1,10) ra(a), range(1,10) rb(b), range(1,10) rc(c);
+
+statement ok
+CREATE INDEX t3_idx ON t3 USING HNSW (vec);
+
+# TopK with blob: EXPLAIN shows HNSW_INDEX_SCAN
+query II
+EXPLAIN SELECT min_by(vec, array_distance(vec, vss_encode_blob([5.0, 5.0, 5.0]::FLOAT[])), 3) FROM t3;
+----
+physical_plan	<REGEX>:.*HNSW_INDEX_SCAN.*
+
+# TopK with blob: correctness (result should match the non-blob path)
+query I
+SELECT list_sum(flatten(min_by(vec, array_distance(vec, vss_encode_blob([5.0, 5.0, 5.0]::FLOAT[])), 3))) BETWEEN 45 AND 50 FROM t3;
+----
+true
+
+statement ok
+DROP TABLE t3;

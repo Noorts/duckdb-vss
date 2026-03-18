@@ -15,6 +15,7 @@
 #include "hnsw/hnsw.hpp"
 #include "hnsw/hnsw_index.hpp"
 #include "hnsw/hnsw_index_scan.hpp"
+#include "hnsw/hnsw_blob_codec.hpp"
 
 namespace duckdb {
 
@@ -138,9 +139,21 @@ public:
 			const auto vector_size = cast_index.GetVectorSize();
 			const auto &matched_vector = const_expr_ref.get().Cast<BoundConstantExpression>().value;
 			auto query_vector = make_unsafe_uniq_array<float>(vector_size);
-			auto vector_elements = ArrayValue::GetChildren(matched_vector);
-			for (idx_t i = 0; i < vector_size; i++) {
-				query_vector[i] = vector_elements[i].GetValue<float>();
+
+			if (matched_vector.type().id() == LogicalTypeId::BLOB) {
+				// BLOB path: decode the quantized blob to float array
+				auto blob = StringValue::Get(matched_vector);
+				auto blob_dims = BlobDimensionCount(blob.size());
+				if (blob_dims != vector_size) {
+					return false;
+				}
+				DecodeBlobToFloatArray(const_data_ptr_cast(blob.data()), blob.size(), query_vector.get());
+			} else {
+				// ARRAY path: existing logic
+				auto vector_elements = ArrayValue::GetChildren(matched_vector);
+				for (idx_t i = 0; i < vector_size; i++) {
+					query_vector[i] = vector_elements[i].GetValue<float>();
+				}
 			}
 
 			bind_data = make_uniq<HNSWIndexScanBindData>(duck_table, cast_index, top_n.limit, std::move(query_vector));

@@ -11,4 +11,5 @@ set(EXTENSION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/hnsw_optimize_join.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/hnsw_optimize_topk.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/hnsw_optimize_scan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/hnsw_blob_functions.cpp
     PARENT_SCOPE)

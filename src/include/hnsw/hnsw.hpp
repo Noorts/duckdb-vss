@@ -20,6 +20,8 @@ public:
 		RegisterScanOptimizer(db);
 		RegisterTopKOptimizer(db);
 		RegisterJoinOptimizer(db);
+
+		RegisterBlobFunctions(loader);
 	}
 
 private:
@@ -33,6 +35,7 @@ private:
 	static void RegisterTopKOptimizer(DatabaseInstance &db);
 	static void RegisterScanOptimizer(DatabaseInstance &db);
 	static void RegisterJoinOptimizer(DatabaseInstance &db);
+	static void RegisterBlobFunctions(ExtensionLoader &loader);
 };
 
 } // namespace duckdb

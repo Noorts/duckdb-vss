@@ -677,12 +677,14 @@ unique_ptr<ExpressionMatcher> HNSWIndex::MakeFunctionMatcher() const {
 	matcher->expr_type = make_uniq<SpecificExpressionTypeMatcher>(ExpressionType::BOUND_FUNCTION);
 	matcher->policy = SetMatcher::Policy::UNORDERED;
 
+	auto array_type = LogicalType::ARRAY(LogicalType::FLOAT, GetVectorSize());
+
 	auto lhs_matcher = make_uniq<ExpressionMatcher>();
-	lhs_matcher->type = make_uniq<SpecificTypeMatcher>(LogicalType::ARRAY(LogicalType::FLOAT, GetVectorSize()));
+	lhs_matcher->type = make_uniq<SetTypesMatcher>(vector<LogicalType>({array_type, LogicalType::BLOB}));
 	matcher->matchers.push_back(std::move(lhs_matcher));
 
 	auto rhs_matcher = make_uniq<ExpressionMatcher>();
-	rhs_matcher->type = make_uniq<SpecificTypeMatcher>(LogicalType::ARRAY(LogicalType::FLOAT, GetVectorSize()));
+	rhs_matcher->type = make_uniq<SetTypesMatcher>(vector<LogicalType>({array_type, LogicalType::BLOB}));
 	matcher->matchers.push_back(std::move(rhs_matcher));
 
 	return std::move(matcher);
